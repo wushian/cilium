@@ -26,6 +26,7 @@ import (
 
 	"github.com/cilium/cilium/api/v1/models"
 	clientset "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
+	k8smetrics "github.com/cilium/cilium/pkg/k8s/metrics"
 	"github.com/cilium/cilium/pkg/logging/logfields"
 	"github.com/cilium/cilium/pkg/option"
 	"github.com/cilium/cilium/pkg/version"
@@ -122,6 +123,17 @@ func setDialer(config *rest.Config) func() {
 }
 
 func runHeartbeat(heartBeat func(context.Context) error, timeout time.Duration, closeAllConns ...func()) {
+	expireDate := time.Now().Add(-timeout)
+	// Don't even perform a health check if we have received a k8s event
+	// in the last 'timeout' duration
+	if k8smetrics.LastInteraction.Time().After(expireDate) {
+		// However, if we have seen an error in the last
+		// 'timeout' duration then we should close all connections!
+		if k8smetrics.LastErrorInteraction.Time().Before(expireDate) {
+			return
+		}
+	}
+
 	done := make(chan error)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
